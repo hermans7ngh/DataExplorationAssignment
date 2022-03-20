@@ -1,0 +1,157 @@
+---
+title: "Data Exploration Assignment"
+author: "Herman Singh"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+##SECTION 1: Cleaning
+```{r}
+#loading in required libraries for data cleaning
+library(tidyverse)
+library(dplyr)
+library(vtable)
+library(jtools)
+library(car)
+library(lubridate)
+library(purrr)
+```
+
+```{r}
+#This creates a dataframe with all information from the trends files
+flist <- list.files(pattern = 'trend')
+flist <- flist %>% map(read.csv)
+```
+
+```{r}
+#This converts the schid in the second file to an integer value so that it can be be the same as the others, and eventually bound
+
+flist[[2]]$schid <- as.integer(flist[[2]]$schid)
+
+cleaning <- bind_rows(flist)
+head(cleaning)
+cleaning
+```
+
+```{r}
+#Since there are some colleges that have the same name, the second instance of each will be removed so that analysis can be easier to perform and data points don't end up skewed due to repeat names
+
+id_name_link <- read.csv('id_name_link.csv')
+id_name_link <- id_name_link %>% 
+  group_by(schname) %>% 
+  mutate(N = n()) %>% 
+  filter(N == 1)
+```
+
+```{r}
+#Now the data from the two previous chunks can be combined using the schname column
+linkcleaning <- cleaning %>% 
+  left_join(id_name_link, by = 'schname')
+```
+
+```{r}
+#Creating the scorecard dataframe and joining it to the main one
+Scorecard <- read.csv('Most+Recent+Cohorts+(Scorecard+Elements).csv')
+
+scorecardlinkcleaning <- linkcleaning %>%
+  rename(OPEID = opeid) %>% 
+  left_join(Scorecard, by = 'OPEID')
+
+```
+
+```{r}
+#standardizing results of index variable
+standardizedcleaning <- scorecardlinkcleaning %>%
+  group_by(schname, keyword) %>%
+  mutate(index_std = (index - mean(index,na.rm = TRUE))/sd(index, na.rm = TRUE))
+```
+
+```{r}
+#This will give data for the relevant time periods related to the scorecard
+scorecardlinkcleaningdates <- standardizedcleaning %>%
+  mutate(date = str_sub(monthorweek, 1, 10)) %>%
+  mutate(date = ymd(date)) %>%
+  mutate(postScorecard = date > ymd('2015-09-01'))
+```
+
+```{r}
+#This changes the inputted value for earnings to a numeric
+scorecardlinkcleaningdates$md_earn_wne_p10.REPORTED.EARNINGS <- as.numeric(scorecardlinkcleaningdates$md_earn_wne_p10.REPORTED.EARNINGS)
+
+```
+
+
+```{r}
+#dropping unneccessary columns
+dropped <- scorecardlinkcleaningdates %>% 
+  select(c(md_earn_wne_p10.REPORTED.EARNINGS, keyword,STABBR, postScorecard, schname, PREDDEG, CITY, CONTROL, index_std, date))
+ 
+
+```
+
+```{r}
+#Renaming to Earnings to make life easy
+rename(dropped, Earnings = md_earn_wne_p10.REPORTED.EARNINGS)
+```
+```{r}
+names(dropped)[names(dropped) == 'md_earn_wne_p10.REPORTED.EARNINGS'] <- 'Earnings'
+
+```
+
+```{r}
+#Now a split must be made to quantify high earnings and low earnings
+#I looked up median incomes for the year 2014 to determine what would constitute high or low earnings and found a statista article which stated that median household income for that year was $55,613. So for my data, anything above $55,000 will be treated as High Income and anything below will be Low Income. It is important to note that this may not actually be considered as low income in the real world, however for the purpose of this project I have gone with the above definition.
+
+#Here i also made the decision to create 2 datasets to work with when running my final analysis. One will contain the data for High Income individuals and the other for Low Income Individuals
+
+HighIncomeData <- filter(dropped, between(Earnings, 55000, 200000))
+
+
+LowIncomeData <- filter(dropped, between(Earnings, 0,54999 ))
+```
+
+```{r}
+#The Final Clean Data without the split between High and Low which I used for simplicity in analysis
+
+CleanedData <- dropped
+```
+
+```{r}
+#Creating files for CleanedData, HighIncomeData, and LowIncomeData
+
+write_csv(HighIncomeData, 'High_Income_Data')
+write_csv(LowIncomeData, 'Low_Income_Data')
+
+write_csv(CleanedData, 'Cleaned_Data')
+```
+
+##SECTION 2: Analysis
+
+```{r}
+#This Portion is used to find the relationship between the introdcution of the scorecard as it relates to the index_st value. Essentially it will show the relationship between the scorecard being introduced and google searches 
+
+#The first model uses the overarching dataset
+model1 <- lm(index_std ~ postScorecard, data = CleanedData)
+export_summs(model1)
+#The regression results here show that the introduction of the scorecard resulted in a standard deviation reduction of .3 in google searches
+
+#The second model uses the dataset focused on high income
+model2 <- lm(index_std ~ postScorecard, data = HighIncomeData)
+export_summs(model2)
+#The regression results for model 2 show that the impact of the scorecard introduction for the high income dataset resulted in the number of google searches dropping by .13 standard deviations
+
+#The third model uses the dataset focused on low income
+model3 <- lm(index_std ~ postScorecard, data = LowIncomeData)
+export_summs(model3)
+#Model 3's regression results indicate that the impact of the scorecard introduction for the low income dataset resulted in the number of google searches declining by .13 standard deviations
+```
+```{r}
+#Graphing the regression results just to compare them visually
+plot_summs(model1, model2, model3)
+```
+
+
+##Conclusion
+
+#Based on the results of the regression, I would conclude that the release of the scorecard has had a slight effect on google searches between high earning and low earning schools, widening the gap in favor of the high earning schools. Something of note based on all the results is that there is a general decline in searches after the introduction of the scorecard. Perhaps this is not a direct effect of the scorecard being implements, but potentially fewer people in the time period the dataset covers were interested in college. 
